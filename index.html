@@ -104,8 +104,9 @@
     </div>
     <div class="group">
       <button id="fitAllBtn">Fit all cameras</button>
-      <button id="exportCsvBtn">Export CSV</button>
-      <button id="exportJsonBtn">Export JSON</button>
+      <button id="copyIllustratorBtn">Copy for Illustrator</button>
+      <button id="exportCsvBtn">Download CSV</button>
+      <button id="exportJsonBtn">Download JSON</button>
     </div>
     <div class="spacer"></div>
     <div class="legend">Bearing = compass heading, 0°&nbsp;N · 90°&nbsp;E · 180°&nbsp;S · 270°&nbsp;W, clockwise</div>
@@ -560,6 +561,51 @@
     downloadBlob(JSON.stringify(data, null, 2), 'cameras_export.json', 'application/json');
   }
 
+  // Typographic minus (U+2212) for negatives, no sign for positives; plain hyphens are for the CSV/JSON round-trip formats only.
+  function formatSignedDegree(v) {
+    const fixed = Math.abs(v).toFixed(6);
+    return (v < 0 ? '−' : '') + fixed;
+  }
+
+  function buildIllustratorText() {
+    const sorted = cameras.slice().sort((a, b) => a.id - b.id);
+    return sorted.map(c => {
+      const id = String(c.id).padStart(2, '0');
+      const bearing = String(Math.round(normalizeBearing(c.bearing))).padStart(3, '0');
+      return `${id}\t${bearing}°\t${formatSignedDegree(c.trueLat)}, ${formatSignedDegree(c.trueLng)}`;
+    }).join('\n');
+  }
+
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise((resolve, reject) => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      ok ? resolve() : reject(new Error('execCommand copy failed'));
+    });
+  }
+
+  function copyForIllustrator() {
+    const text = buildIllustratorText();
+    const btn = document.getElementById('copyIllustratorBtn');
+    const original = btn.textContent;
+    copyTextToClipboard(text)
+      .then(() => { btn.textContent = 'Copied!'; })
+      .catch(() => { btn.textContent = 'Copy failed — file downloaded'; })
+      .finally(() => {
+        downloadBlob(text + '\n', 'cameras_illustrator.txt', 'text/plain');
+        setTimeout(() => { btn.textContent = original; }, 1500);
+      });
+  }
+
   // ---------- Init ----------
   async function init() {
     const data = await loadCameraData();
@@ -590,6 +636,7 @@
     });
     document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
     document.getElementById('exportJsonBtn').addEventListener('click', exportJSON);
+    document.getElementById('copyIllustratorBtn').addEventListener('click', copyForIllustrator);
 
     if (cameras.length) selectCamera(cameras[0].id, false);
   }
