@@ -107,6 +107,10 @@
       <button id="copyIllustratorBtn">Copy for Illustrator</button>
       <button id="exportCsvBtn">Download CSV</button>
       <button id="exportJsonBtn">Download JSON</button>
+      <button id="resetBtn" title="Discard saved edits and reload cameras.csv">Reset to cameras.csv</button>
+    </div>
+    <div class="group">
+      <span class="readout" id="saveStatus"></span>
     </div>
     <div class="spacer"></div>
     <div class="legend">Bearing = compass heading, 0°&nbsp;N · 90°&nbsp;E · 180°&nbsp;S · 270°&nbsp;W, clockwise</div>
@@ -223,7 +227,7 @@
     });
   }
 
-  async function loadCameraData() {
+  async function loadBaseCameraData() {
     try {
       const res = await fetch('cameras.csv', { cache: 'no-store' });
       if (!res.ok) throw new Error('bad response');
@@ -233,6 +237,67 @@
     } catch (e) {
       return parseCSV(FALLBACK_CSV);
     }
+  }
+
+  // ---------- Autosave (browser localStorage — persists edits across reloads on this machine/browser) ----------
+  const STORAGE_KEY = 'surf-ranch-wood.cameras.v1';
+  let storageAvailable = true;
+  try {
+    const t = '__surf_ranch_wood_test__';
+    localStorage.setItem(t, '1');
+    localStorage.removeItem(t);
+  } catch (e) {
+    storageAvailable = false;
+  }
+
+  function loadSavedState() {
+    if (!storageAvailable) return null;
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      return Array.isArray(data) && data.length ? data : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  let saveTimer = null;
+  function scheduleSave() {
+    if (!storageAvailable) return;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      const data = cameras.map(c => ({
+        id: c.id,
+        lat: parseFloat(c.trueLat.toFixed(6)),
+        lng: parseFloat(c.trueLng.toFixed(6)),
+        bearing: Math.round(normalizeBearing(c.bearing))
+      }));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        showSaveStatus('Edits saved in browser');
+      } catch (e) {
+        showSaveStatus('Autosave unavailable');
+      }
+    }, 250);
+  }
+
+  let statusTimer = null;
+  function showSaveStatus(text) {
+    const el = document.getElementById('saveStatus');
+    if (!el) return;
+    el.textContent = text;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { el.textContent = ''; }, 2000);
+  }
+
+  async function loadCameraData() {
+    const saved = loadSavedState();
+    if (saved) {
+      showSaveStatus('Restored saved edits');
+      return saved;
+    }
+    return loadBaseCameraData();
   }
 
   // ---------- Globals ----------
@@ -310,6 +375,7 @@
     });
     cam.handle.on('dragend', () => {
       if (cam.id === selectedId) updatePhotoInfo(cam);
+      scheduleSave();
     });
 
     return cam;
@@ -451,6 +517,7 @@
     } else if (explodedGroupIds.includes(cam.id)) {
       explodedGroupIds = explodedGroupIds.filter(x => x !== cam.id);
     }
+    scheduleSave();
   }
 
   // ---------- Photo panel ----------
@@ -511,6 +578,7 @@
         cam.bearing = normalizeBearing(v);
         updateWedgeAndHandle(cam);
         if (cam.id === selectedId) updatePhotoInfo(cam);
+        scheduleSave();
       }
     });
 
@@ -637,6 +705,11 @@
     document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
     document.getElementById('exportJsonBtn').addEventListener('click', exportJSON);
     document.getElementById('copyIllustratorBtn').addEventListener('click', copyForIllustrator);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      if (!confirm('Discard saved edits in this browser and reload cameras.csv?')) return;
+      if (storageAvailable) localStorage.removeItem(STORAGE_KEY);
+      location.reload();
+    });
 
     if (cameras.length) selectCamera(cameras[0].id, false);
   }
