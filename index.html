@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Surf Ranch Wood — Camera Verify</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0e1113; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  #topbar {
+    display: flex; align-items: center; flex-wrap: wrap; gap: 14px;
+    padding: 8px 14px; background: #181c20; color: #e8e8e8;
+    border-bottom: 1px solid #2a2f35; font-size: 13px;
+  }
+  #topbar h1 { font-size: 15px; margin: 0 12px 0 0; font-weight: 600; white-space: nowrap; }
+  #topbar .group { display: flex; align-items: center; gap: 6px; }
+  #topbar label { color: #aab2bb; }
+  #topbar input[type="range"] { width: 110px; vertical-align: middle; }
+  #topbar .readout { min-width: 34px; display: inline-block; text-align: right; color: #fff; font-variant-numeric: tabular-nums; }
+  #topbar button {
+    background: #2a3138; color: #e8e8e8; border: 1px solid #3a4249; border-radius: 5px;
+    padding: 6px 10px; font-size: 12px; cursor: pointer;
+  }
+  #topbar button:hover { background: #343d45; }
+  #topbar .legend { color: #8a9aa8; font-size: 11.5px; margin-left: auto; white-space: nowrap; }
+  #topbar .spacer { flex: 1 1 auto; }
+
+  #main { flex: 1; display: flex; min-height: 0; }
+  #map { flex: 1; background: #0b0d0f; }
+
+  #panel {
+    width: 380px; flex: none; background: #14171a; color: #ddd;
+    display: flex; flex-direction: column; border-left: 1px solid #2a2f35;
+  }
+
+  #photo-box { padding: 10px 12px; border-bottom: 1px solid #262b30; }
+  #photo-box .cam-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #fff; }
+  #photo-frame {
+    position: relative; width: 100%; aspect-ratio: 4 / 3; background: #1b1f24;
+    border-radius: 6px; overflow: hidden; border: 1px solid #2a2f35;
+  }
+  #photo-frame img { width: 100%; height: 100%; object-fit: cover; display: none; }
+  #photo-placeholder {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #6b7580; font-size: 12px; text-align: center; padding: 10px;
+  }
+  #photo-info { margin-top: 6px; font-size: 11.5px; color: #9aa4ad; font-variant-numeric: tabular-nums; }
+
+  #camera-list { flex: 1; overflow-y: auto; }
+  .cam-row { padding: 7px 12px; border-bottom: 1px solid #1e2226; cursor: pointer; }
+  .cam-row:hover { background: #1a1e22; }
+  .cam-row.selected { background: #24384a; }
+  .cam-row .row-head { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #cfd6dc; }
+  .cam-row .row-head .cid { font-weight: 700; color: #ffb454; width: 24px; }
+  .cam-row.selected .row-head .cid { color: #ffd27a; }
+  .cam-row .fields { display: flex; gap: 5px; margin-top: 4px; }
+  .cam-row .fields label { font-size: 9.5px; color: #6b7580; display: block; }
+  .cam-row input {
+    width: 100%; background: #0e1113; color: #eee; border: 1px solid #333a40;
+    border-radius: 3px; padding: 2px 4px; font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+  .cam-row input:focus { outline: none; border-color: #5a8fd6; }
+  .cam-row .fields .fld { flex: 1; min-width: 0; }
+  .cam-row .fields .fld.bearing { flex: 0 0 54px; }
+
+  #panel-footer { padding: 8px 12px; border-top: 1px solid #262b30; font-size: 10.5px; color: #6b7580; }
+
+  .cam-label {
+    background: transparent !important; border: none !important; box-shadow: none !important;
+    color: #fff; font-size: 11px; font-weight: 700; text-shadow: 0 0 3px #000, 0 0 3px #000;
+    padding: 0 !important;
+  }
+  .cam-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #35c1e0; border: 1.5px solid #08303b; box-shadow: 0 0 3px rgba(0,0,0,.8);
+  }
+  .cam-dot.selected { background: #ff9d2e; border-color: #5a3200; width: 13px; height: 13px; }
+  .cam-handle {
+    width: 8px; height: 8px; background: #d8d8d8; border: 1px solid #333;
+    box-shadow: 0 0 2px rgba(0,0,0,.8); cursor: grab;
+  }
+  .cam-handle.selected { background: #ff9d2e; border-color: #5a3200; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <div id="topbar">
+    <h1>Surf Ranch Wood — Camera Verify</h1>
+    <div class="group">
+      <label for="fovRange">FOV</label>
+      <input type="range" id="fovRange" min="5" max="120" step="1" value="40" />
+      <span class="readout" id="fovReadout">40°</span>
+    </div>
+    <div class="group">
+      <label for="rangeRange">Range</label>
+      <input type="range" id="rangeRange" min="5" max="150" step="1" value="40" />
+      <span class="readout" id="rangeReadout">40m</span>
+    </div>
+    <div class="group">
+      <button id="fitAllBtn">Fit all cameras</button>
+      <button id="exportCsvBtn">Export CSV</button>
+      <button id="exportJsonBtn">Export JSON</button>
+    </div>
+    <div class="spacer"></div>
+    <div class="legend">Bearing = compass heading, 0°&nbsp;N · 90°&nbsp;E · 180°&nbsp;S · 270°&nbsp;W, clockwise</div>
+  </div>
+
+  <div id="main">
+    <div id="map"></div>
+    <div id="panel">
+      <div id="photo-box">
+        <div class="cam-title" id="photoTitle">No camera selected</div>
+        <div id="photo-frame">
+          <img id="photoImg" alt="" />
+          <div id="photo-placeholder">No photo available</div>
+        </div>
+        <div id="photo-info"></div>
+      </div>
+      <div id="camera-list"></div>
+      <div id="panel-footer">Panel list is the reliable way to reach stacked cameras — click a row to select &amp; pan.</div>
+    </div>
+  </div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Fallback data (used when cameras.csv can't be fetched, e.g. opened via file://) ----------
+  const FALLBACK_CSV = `id,lat,lng,bearing
+1,36.255278,-119.792500,319
+2,36.254722,-119.792778,204
+3,36.255000,-119.792778,170
+4,36.255278,-119.792778,215
+5,36.255556,-119.791944,290
+6,36.255556,-119.791944,176
+7,36.255833,-119.792222,311
+8,36.255278,-119.790556,214
+9,36.255278,-119.791389,230
+10,36.255556,-119.791111,170
+11,36.256389,-119.790833,81
+12,36.256667,-119.791111,323
+13,36.256389,-119.791111,97
+14,36.255278,-119.790556,77
+15,36.255278,-119.790556,164
+16,36.255278,-119.790556,15
+17,36.255278,-119.790833,342
+18,36.255278,-119.790833,168
+19,36.255278,-119.790833,169
+20,36.255278,-119.790833,350
+21,36.255278,-119.790833,115
+22,36.255278,-119.790833,21
+23,36.255556,-119.790278,143
+24,36.254722,-119.790278,346
+25,36.255278,-119.790000,15
+26,36.255278,-119.790556,84
+27,36.257222,-119.790833,20
+28,36.256944,-119.790833,343
+29,36.256944,-119.790833,55
+30,36.261667,-119.790278,105
+31,36.261667,-119.790278,105
+32,36.261667,-119.790278,74
+`;
+
+  // ---------- Geo helpers (compass bearing convention: 0=N, 90=E, 180=S, 270=W, clockwise) ----------
+  const R_EARTH = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const toDeg = r => r * 180 / Math.PI;
+
+  function normalizeBearing(b) {
+    b = b % 360;
+    if (b < 0) b += 360;
+    return b;
+  }
+
+  // Destination point given start lat/lng, compass bearing (deg), distance (m).
+  // Flat-earth approximation — accurate at the ~150m scale used here.
+  function destPoint(lat, lng, bearingDeg, distMeters) {
+    const bearing = toRad(bearingDeg);
+    const latRad = toRad(lat);
+    const dLat = (distMeters * Math.cos(bearing)) / R_EARTH;
+    const dLng = (distMeters * Math.sin(bearing)) / (R_EARTH * Math.cos(latRad));
+    return [lat + toDeg(dLat), lng + toDeg(dLng)];
+  }
+
+  // Initial compass bearing from point 1 to point 2.
+  function bearingBetween(lat1, lng1, lat2, lng2) {
+    const phi1 = toRad(lat1), phi2 = toRad(lat2);
+    const dLng = toRad(lng2 - lng1);
+    const y = Math.sin(dLng) * Math.cos(phi2);
+    const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLng);
+    return normalizeBearing(toDeg(Math.atan2(y, x)));
+  }
+
+  function computeWedge(lat, lng, bearingDeg, fov, range) {
+    const half = fov / 2;
+    const segs = 10;
+    const pts = [[lat, lng]];
+    for (let i = 0; i <= segs; i++) {
+      const ang = bearingDeg - half + (fov * i / segs);
+      pts.push(destPoint(lat, lng, ang, range));
+    }
+    return pts;
+  }
+
+  function coordKey(lat, lng) {
+    return lat.toFixed(6) + ',' + lng.toFixed(6);
+  }
+
+  function parseCSV(text) {
+    return text.trim().split(/\r?\n/).slice(1).filter(Boolean).map(line => {
+      const [id, lat, lng, bearing] = line.split(',').map(s => s.trim());
+      return { id: parseInt(id, 10), lat: parseFloat(lat), lng: parseFloat(lng), bearing: parseFloat(bearing) };
+    });
+  }
+
+  async function loadCameraData() {
+    try {
+      const res = await fetch('cameras.csv', { cache: 'no-store' });
+      if (!res.ok) throw new Error('bad response');
+      const text = await res.text();
+      if (!text.trim()) throw new Error('empty');
+      return parseCSV(text);
+    } catch (e) {
+      return parseCSV(FALLBACK_CSV);
+    }
+  }
+
+  // ---------- Globals ----------
+  let FOV = 40;
+  let RANGE = 40;
+  let selectedId = null;
+  let explodedGroupIds = [];
+  const camerasById = {};
+  let cameras = [];
+
+  const map = L.map('map', { zoomControl: true, preferCanvas: false });
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 20,
+    maxNativeZoom: 19,
+    attribution: 'Imagery &copy; Esri, Maxar, Earthstar Geographics'
+  }).addTo(map);
+  L.control.scale({ metric: true, imperial: true }).addTo(map);
+
+  function dotIcon(selected) {
+    return L.divIcon({ className: '', html: `<div class="cam-dot${selected ? ' selected' : ''}"></div>`, iconSize: [13, 13], iconAnchor: [6.5, 6.5] });
+  }
+  function handleIcon(selected) {
+    return L.divIcon({ className: '', html: `<div class="cam-handle${selected ? ' selected' : ''}"></div>`, iconSize: [8, 8], iconAnchor: [4, 4] });
+  }
+
+  function getGroup(cam) {
+    const key = coordKey(cam.trueLat, cam.trueLng);
+    return cameras.filter(c => coordKey(c.trueLat, c.trueLng) === key).map(c => c.id).sort((a, b) => a - b);
+  }
+
+  // ---------- Per-camera visuals ----------
+  function buildCamera(data) {
+    const cam = {
+      id: data.id,
+      trueLat: data.lat, trueLng: data.lng,
+      dispLat: data.lat, dispLng: data.lng,
+      bearing: normalizeBearing(data.bearing),
+      _raf: null
+    };
+
+    cam.dot = L.marker([cam.dispLat, cam.dispLng], { icon: dotIcon(false), draggable: true, zIndexOffset: 200 })
+      .addTo(map)
+      .bindTooltip(String(cam.id), { permanent: true, direction: 'right', offset: [8, -6], className: 'cam-label' });
+
+    cam.wedge = L.polygon(computeWedge(cam.dispLat, cam.dispLng, cam.bearing, FOV, RANGE), {
+      color: '#35c1e0', weight: 1.5, fillColor: '#35c1e0', fillOpacity: 0.22, interactive: true
+    }).addTo(map);
+
+    cam.handle = L.marker(destPoint(cam.dispLat, cam.dispLng, cam.bearing, RANGE), { icon: handleIcon(false), draggable: true, zIndexOffset: 300 })
+      .addTo(map);
+
+    cam.dot.on('click', () => onCameraClicked(cam.id));
+    cam.wedge.on('click', () => onCameraClicked(cam.id));
+
+    cam.dot.on('drag', e => {
+      const ll = e.target.getLatLng();
+      cam.dispLat = ll.lat; cam.dispLng = ll.lng;
+      updateWedgeAndHandle(cam);
+      setPanelLatLng(cam, ll.lat, ll.lng);
+    });
+    cam.dot.on('dragend', () => {
+      cam.trueLat = cam.dispLat; cam.trueLng = cam.dispLng;
+      setPanelLatLng(cam, cam.trueLat, cam.trueLng);
+      refreshAfterEdit(cam);
+    });
+
+    cam.handle.on('drag', e => {
+      const ll = e.target.getLatLng();
+      const b = bearingBetween(cam.dispLat, cam.dispLng, ll.lat, ll.lng);
+      cam.bearing = b;
+      cam.handle.setLatLng(destPoint(cam.dispLat, cam.dispLng, b, RANGE));
+      cam.wedge.setLatLngs(computeWedge(cam.dispLat, cam.dispLng, cam.bearing, FOV, RANGE));
+      setPanelBearing(cam, b);
+      if (cam.id === selectedId) updatePhotoInfo(cam);
+    });
+    cam.handle.on('dragend', () => {
+      if (cam.id === selectedId) updatePhotoInfo(cam);
+    });
+
+    return cam;
+  }
+
+  function updateWedgeAndHandle(cam) {
+    cam.wedge.setLatLngs(computeWedge(cam.dispLat, cam.dispLng, cam.bearing, FOV, RANGE));
+    cam.handle.setLatLng(destPoint(cam.dispLat, cam.dispLng, cam.bearing, RANGE));
+  }
+
+  function updateCameraVisuals(cam) {
+    cam.dot.setLatLng([cam.dispLat, cam.dispLng]);
+    updateWedgeAndHandle(cam);
+  }
+
+  function redrawAllForFovRange() {
+    cameras.forEach(updateWedgeAndHandle);
+  }
+
+  // ---------- Explode / collapse ----------
+  function cancelAnim(cam) {
+    if (cam._raf) { cancelAnimationFrame(cam._raf); cam._raf = null; }
+  }
+
+  function animateCamTo(cam, targetLat, targetLng, duration) {
+    duration = duration || 320;
+    cancelAnim(cam);
+    const startLat = cam.dispLat, startLng = cam.dispLng;
+    const t0 = performance.now();
+    function step(now) {
+      const t = Math.min(1, (now - t0) / duration);
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      cam.dispLat = startLat + (targetLat - startLat) * ease;
+      cam.dispLng = startLng + (targetLng - startLng) * ease;
+      updateCameraVisuals(cam);
+      if (t < 1) { cam._raf = requestAnimationFrame(step); } else { cam._raf = null; }
+    }
+    cam._raf = requestAnimationFrame(step);
+  }
+
+  function explodeGroup(centerCam, groupIds) {
+    const others = groupIds.filter(id => id !== centerCam.id);
+    const n = others.length;
+    const radiusMeters = 7;
+    others.forEach((id, i) => {
+      const cam = camerasById[id];
+      const angle = (360 / n) * i;
+      const [tlat, tlng] = destPoint(centerCam.trueLat, centerCam.trueLng, angle, radiusMeters);
+      animateCamTo(cam, tlat, tlng);
+    });
+    if (centerCam.dispLat !== centerCam.trueLat || centerCam.dispLng !== centerCam.trueLng) {
+      animateCamTo(centerCam, centerCam.trueLat, centerCam.trueLng);
+    }
+  }
+
+  function collapseGroup(groupIds, exceptId) {
+    groupIds.forEach(id => {
+      if (id === exceptId) return;
+      const cam = camerasById[id];
+      animateCamTo(cam, cam.trueLat, cam.trueLng);
+    });
+  }
+
+  // ---------- Selection ----------
+  function onCameraClicked(id) {
+    if (id === selectedId) {
+      const group = getGroup(camerasById[id]);
+      if (group.length > 1) {
+        const idx = group.indexOf(id);
+        const nextId = group[(idx + 1) % group.length];
+        selectCamera(nextId, true);
+        return;
+      }
+    }
+    selectCamera(id, true);
+  }
+
+  function selectCamera(id, doFocus) {
+    const cam = camerasById[id];
+    if (!cam) return;
+
+    if (explodedGroupIds.length && !explodedGroupIds.includes(id)) {
+      collapseGroup(explodedGroupIds, null);
+      explodedGroupIds = [];
+    }
+
+    selectedId = id;
+    const group = getGroup(cam);
+    if (group.length > 1) {
+      explodeGroup(cam, group);
+      explodedGroupIds = group;
+    } else {
+      explodedGroupIds = [];
+      if (cam.dispLat !== cam.trueLat || cam.dispLng !== cam.trueLng) {
+        animateCamTo(cam, cam.trueLat, cam.trueLng);
+      }
+    }
+
+    refreshStyles();
+    updatePhotoPanel(cam);
+    syncPanelSelection();
+    if (doFocus) focusMapOn(cam);
+  }
+
+  function focusMapOn(cam) {
+    const targetZoom = Math.max(map.getZoom(), 18);
+    map.flyTo([cam.trueLat, cam.trueLng], targetZoom, { duration: 0.5 });
+  }
+
+  function refreshStyles() {
+    cameras.forEach(cam => {
+      const isSel = cam.id === selectedId;
+      cam.dot.setIcon(dotIcon(isSel));
+      cam.handle.setIcon(handleIcon(isSel));
+      cam.dot.setZIndexOffset(isSel ? 1200 : 200);
+      cam.handle.setZIndexOffset(isSel ? 1300 : 300);
+      cam.wedge.setStyle({
+        color: isSel ? '#ff9d2e' : '#35c1e0',
+        fillColor: isSel ? '#ff9d2e' : '#35c1e0',
+        fillOpacity: isSel ? 0.32 : 0.2,
+        weight: isSel ? 2.2 : 1.5
+      });
+      if (isSel) cam.wedge.bringToFront();
+    });
+  }
+
+  function refreshAfterEdit(cam) {
+    updateCameraVisuals(cam);
+    if (cam.id === selectedId) {
+      const group = getGroup(cam);
+      if (group.length > 1) {
+        explodeGroup(cam, group);
+        explodedGroupIds = group;
+      } else if (explodedGroupIds.length) {
+        collapseGroup(explodedGroupIds, null);
+        explodedGroupIds = [];
+      }
+      updatePhotoInfo(cam);
+    } else if (explodedGroupIds.includes(cam.id)) {
+      explodedGroupIds = explodedGroupIds.filter(x => x !== cam.id);
+    }
+  }
+
+  // ---------- Photo panel ----------
+  function updatePhotoPanel(cam) {
+    document.getElementById('photoTitle').textContent = `Camera ${cam.id}`;
+    const img = document.getElementById('photoImg');
+    const placeholder = document.getElementById('photo-placeholder');
+    img.style.display = 'none';
+    placeholder.style.display = 'flex';
+    placeholder.textContent = `No photo available for camera ${cam.id}`;
+    img.onload = () => { img.style.display = 'block'; placeholder.style.display = 'none'; };
+    img.onerror = () => { img.style.display = 'none'; placeholder.style.display = 'flex'; };
+    img.src = `photos/${cam.id}.jpg`;
+    updatePhotoInfo(cam);
+  }
+
+  function updatePhotoInfo(cam) {
+    if (cam.id !== selectedId) return;
+    document.getElementById('photo-info').textContent =
+      `lat ${cam.trueLat.toFixed(6)}, lng ${cam.trueLng.toFixed(6)}, bearing ${Math.round(normalizeBearing(cam.bearing))}°`;
+  }
+
+  // ---------- Side panel list ----------
+  function buildPanelRow(cam) {
+    const row = document.createElement('div');
+    row.className = 'cam-row';
+    row.innerHTML = `
+      <div class="row-head"><span class="cid">#${cam.id}</span></div>
+      <div class="fields">
+        <div class="fld"><label>lat</label><input type="number" step="0.000001" class="latInput" /></div>
+        <div class="fld"><label>lng</label><input type="number" step="0.000001" class="lngInput" /></div>
+        <div class="fld bearing"><label>bearing</label><input type="number" step="1" min="0" max="359" class="bearingInput" /></div>
+      </div>
+    `;
+    const latInput = row.querySelector('.latInput');
+    const lngInput = row.querySelector('.lngInput');
+    const bearingInput = row.querySelector('.bearingInput');
+    latInput.value = cam.trueLat.toFixed(6);
+    lngInput.value = cam.trueLng.toFixed(6);
+    bearingInput.value = Math.round(cam.bearing);
+
+    row.addEventListener('click', e => {
+      if (e.target.tagName === 'INPUT') return;
+      selectCamera(cam.id, true);
+    });
+
+    latInput.addEventListener('input', () => {
+      const v = parseFloat(latInput.value);
+      if (!isNaN(v)) { cam.trueLat = v; cam.dispLat = v; refreshAfterEdit(cam); }
+    });
+    lngInput.addEventListener('input', () => {
+      const v = parseFloat(lngInput.value);
+      if (!isNaN(v)) { cam.trueLng = v; cam.dispLng = v; refreshAfterEdit(cam); }
+    });
+    bearingInput.addEventListener('input', () => {
+      const v = parseFloat(bearingInput.value);
+      if (!isNaN(v)) {
+        cam.bearing = normalizeBearing(v);
+        updateWedgeAndHandle(cam);
+        if (cam.id === selectedId) updatePhotoInfo(cam);
+      }
+    });
+
+    cam.rowEl = row;
+    cam.latInput = latInput;
+    cam.lngInput = lngInput;
+    cam.bearingInput = bearingInput;
+    return row;
+  }
+
+  function setPanelLatLng(cam, lat, lng) {
+    if (document.activeElement !== cam.latInput) cam.latInput.value = lat.toFixed(6);
+    if (document.activeElement !== cam.lngInput) cam.lngInput.value = lng.toFixed(6);
+  }
+  function setPanelBearing(cam, bearing) {
+    if (document.activeElement !== cam.bearingInput) cam.bearingInput.value = Math.round(normalizeBearing(bearing));
+  }
+
+  function syncPanelSelection() {
+    cameras.forEach(cam => cam.rowEl.classList.toggle('selected', cam.id === selectedId));
+    const cam = camerasById[selectedId];
+    if (cam) cam.rowEl.scrollIntoView({ block: 'nearest' });
+  }
+
+  // ---------- Export ----------
+  function downloadBlob(content, filename, type) {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function exportCSV() {
+    const lines = ['id,lat,lng,bearing'];
+    cameras.forEach(c => lines.push(`${c.id},${c.trueLat.toFixed(6)},${c.trueLng.toFixed(6)},${Math.round(normalizeBearing(c.bearing))}`));
+    downloadBlob(lines.join('\n') + '\n', 'cameras_export.csv', 'text/csv');
+  }
+
+  function exportJSON() {
+    const data = cameras.map(c => ({
+      id: c.id,
+      lat: parseFloat(c.trueLat.toFixed(6)),
+      lng: parseFloat(c.trueLng.toFixed(6)),
+      bearing: Math.round(normalizeBearing(c.bearing))
+    }));
+    downloadBlob(JSON.stringify(data, null, 2), 'cameras_export.json', 'application/json');
+  }
+
+  // ---------- Init ----------
+  async function init() {
+    const data = await loadCameraData();
+    const listEl = document.getElementById('camera-list');
+
+    data.forEach(d => {
+      const cam = buildCamera(d);
+      camerasById[cam.id] = cam;
+      cameras.push(cam);
+      listEl.appendChild(buildPanelRow(cam));
+    });
+
+    const bounds = L.latLngBounds(cameras.map(c => [c.trueLat, c.trueLng]));
+    map.fitBounds(bounds.pad(0.25));
+
+    document.getElementById('fovRange').addEventListener('input', e => {
+      FOV = parseFloat(e.target.value);
+      document.getElementById('fovReadout').textContent = Math.round(FOV) + '°';
+      redrawAllForFovRange();
+    });
+    document.getElementById('rangeRange').addEventListener('input', e => {
+      RANGE = parseFloat(e.target.value);
+      document.getElementById('rangeReadout').textContent = Math.round(RANGE) + 'm';
+      redrawAllForFovRange();
+    });
+    document.getElementById('fitAllBtn').addEventListener('click', () => {
+      map.fitBounds(L.latLngBounds(cameras.map(c => [c.trueLat, c.trueLng])).pad(0.25));
+    });
+    document.getElementById('exportCsvBtn').addEventListener('click', exportCSV);
+    document.getElementById('exportJsonBtn').addEventListener('click', exportJSON);
+
+    if (cameras.length) selectCamera(cameras[0].id, false);
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
