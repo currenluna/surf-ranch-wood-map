@@ -462,7 +462,7 @@
     placeholder.textContent = `No photo available for camera ${cam.id}`;
     img.onload = () => { img.style.display = 'block'; placeholder.style.display = 'none'; };
     img.onerror = () => { img.style.display = 'none'; placeholder.style.display = 'flex'; };
-    img.src = `photos/${cam.id}.jpg`;
+    img.src = `photos/po-${String(cam.id).padStart(2, '0')}.jpg`;
     updatePhotoInfo(cam);
   }
 
