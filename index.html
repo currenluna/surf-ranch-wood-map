@@ -27,6 +27,8 @@
     padding: 6px 10px; font-size: 12px; cursor: pointer;
   }
   #topbar button:hover { background: #343d45; }
+  #topbar button:disabled { opacity: 0.4; cursor: not-allowed; }
+  #topbar button:disabled:hover { background: #2a3138; }
   #topbar .legend { color: #8a9aa8; font-size: 11.5px; margin-left: auto; white-space: nowrap; }
   #topbar .spacer { flex: 1 1 auto; }
 
@@ -108,6 +110,12 @@
       <button id="exportCsvBtn">Download CSV</button>
       <button id="exportJsonBtn">Download JSON</button>
       <button id="resetBtn" title="Discard saved edits and reload cameras.csv">Reset to cameras.csv</button>
+    </div>
+    <div class="group">
+      <button id="loadCsvBtn" title="Upload a previously downloaded CSV checkpoint">Load CSV…</button>
+      <input type="file" id="csvFileInput" accept=".csv,text/csv" style="display:none" />
+      <button id="connectFolderBtn" title="Chrome/Edge: pick a folder to auto-load its newest CSV checkpoint">Connect checkpoints folder…</button>
+      <button id="loadLatestBtn" title="Re-scan the connected folder and load its newest CSV">Load latest checkpoint</button>
     </div>
     <div class="group">
       <span class="readout" id="saveStatus"></span>
@@ -263,7 +271,8 @@
   }
 
   let saveTimer = null;
-  function scheduleSave() {
+  function scheduleSave(opts) {
+    opts = opts || {};
     if (!storageAvailable) return;
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -275,9 +284,9 @@
       }));
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        showSaveStatus('Edits saved in browser');
+        if (!opts.silent) showSaveStatus('Edits saved in browser');
       } catch (e) {
-        showSaveStatus('Autosave unavailable');
+        if (!opts.silent) showSaveStatus('Autosave unavailable');
       }
     }, 250);
   }
@@ -298,6 +307,116 @@
       return saved;
     }
     return loadBaseCameraData();
+  }
+
+  function isValidRow(d) {
+    return Number.isFinite(d.id) && Number.isFinite(d.lat) && Number.isFinite(d.lng) && Number.isFinite(d.bearing);
+  }
+
+  // Applies an uploaded/checkpoint CSV's rows onto the existing 32 cameras (matched by id),
+  // then re-syncs visuals, the panel, autosave, and the current selection's explode state.
+  function applyLoadedData(rows, sourceLabel) {
+    let updated = 0;
+    rows.forEach(d => {
+      const cam = camerasById[d.id];
+      if (!cam) return;
+      cancelAnim(cam);
+      cam.trueLat = d.lat; cam.trueLng = d.lng;
+      cam.dispLat = d.lat; cam.dispLng = d.lng;
+      cam.bearing = normalizeBearing(d.bearing);
+      updateCameraVisuals(cam);
+      setPanelLatLng(cam, cam.trueLat, cam.trueLng);
+      setPanelBearing(cam, cam.bearing);
+      updated++;
+    });
+    explodedGroupIds = [];
+    if (selectedId !== null && camerasById[selectedId]) selectCamera(selectedId, false);
+    scheduleSave({ silent: true });
+    showSaveStatus(`Loaded ${updated} camera${updated === 1 ? '' : 's'}${sourceLabel ? ' from ' + sourceLabel : ''}`);
+  }
+
+  function handleCsvFile(file) {
+    file.text().then(text => {
+      const rows = parseCSV(text).filter(isValidRow);
+      if (!rows.length) { showSaveStatus('No valid rows found in that CSV'); return; }
+      applyLoadedData(rows, file.name);
+    }).catch(() => showSaveStatus('Failed to read that CSV'));
+  }
+
+  // ---------- Checkpoints folder (Chrome/Edge File System Access API) ----------
+  const fsAccessSupported = 'showDirectoryPicker' in window;
+  const CHECKPOINT_DB = 'surf-ranch-wood-fs';
+  const CHECKPOINT_HANDLE_KEY = 'checkpointsDir';
+
+  function openHandleDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(CHECKPOINT_DB, 1);
+      req.onupgradeneeded = () => req.result.createObjectStore('handles');
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbGetHandle(key) {
+    const db = await openHandleDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', 'readonly');
+      const req = tx.objectStore('handles').get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function idbSetHandle(key, value) {
+    const db = await openHandleDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function getNewestCsvInDir(dirHandle) {
+    let newest = null;
+    for await (const [name, handle] of dirHandle.entries()) {
+      if (handle.kind !== 'file' || !/\.csv$/i.test(name)) continue;
+      const file = await handle.getFile();
+      if (!newest || file.lastModified > newest.file.lastModified) newest = { file, name };
+    }
+    return newest;
+  }
+
+  async function loadLatestCheckpoint(opts) {
+    opts = opts || {};
+    if (!fsAccessSupported) { if (!opts.silent) showSaveStatus('Checkpoints folder needs Chrome/Edge'); return; }
+    try {
+      const dirHandle = await idbGetHandle(CHECKPOINT_HANDLE_KEY);
+      if (!dirHandle) { if (!opts.silent) showSaveStatus('No checkpoints folder connected yet'); return; }
+      let perm = await dirHandle.queryPermission({ mode: 'read' });
+      if (perm !== 'granted') {
+        if (opts.silent) return;
+        perm = await dirHandle.requestPermission({ mode: 'read' });
+        if (perm !== 'granted') { showSaveStatus('Folder permission denied'); return; }
+      }
+      const newest = await getNewestCsvInDir(dirHandle);
+      if (!newest) { if (!opts.silent) showSaveStatus('No .csv files found in that folder'); return; }
+      const rows = parseCSV(await newest.file.text()).filter(isValidRow);
+      if (!rows.length) { if (!opts.silent) showSaveStatus(`${newest.name} had no valid rows`); return; }
+      applyLoadedData(rows, newest.name);
+    } catch (e) {
+      if (!opts.silent) showSaveStatus('Failed to load checkpoint');
+    }
+  }
+
+  async function connectCheckpointsFolder() {
+    if (!fsAccessSupported) { showSaveStatus('Checkpoints folder needs Chrome/Edge'); return; }
+    try {
+      const dirHandle = await window.showDirectoryPicker({ id: 'surf-ranch-wood-checkpoints', mode: 'read' });
+      await idbSetHandle(CHECKPOINT_HANDLE_KEY, dirHandle);
+      showSaveStatus('Checkpoints folder connected');
+      await loadLatestCheckpoint({ silent: false });
+    } catch (e) {
+      if (e.name !== 'AbortError') showSaveStatus('Could not access that folder');
+    }
   }
 
   // ---------- Globals ----------
@@ -711,7 +830,30 @@
       location.reload();
     });
 
+    document.getElementById('loadCsvBtn').addEventListener('click', () => {
+      document.getElementById('csvFileInput').click();
+    });
+    document.getElementById('csvFileInput').addEventListener('change', e => {
+      const file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      if (!confirm(`Load "${file.name}"? This overwrites current positions/bearings for any matching camera ids.`)) return;
+      handleCsvFile(file);
+    });
+
+    if (!fsAccessSupported) {
+      document.getElementById('connectFolderBtn').disabled = true;
+      document.getElementById('loadLatestBtn').disabled = true;
+    } else {
+      document.getElementById('connectFolderBtn').addEventListener('click', connectCheckpointsFolder);
+      document.getElementById('loadLatestBtn').addEventListener('click', () => loadLatestCheckpoint({ silent: false }));
+    }
+
     if (cameras.length) selectCamera(cameras[0].id, false);
+
+    // If a checkpoints folder was connected in an earlier session and permission is still
+    // granted, silently pick up its newest CSV without prompting.
+    if (fsAccessSupported) loadLatestCheckpoint({ silent: true });
   }
 
   init();
